@@ -1,0 +1,200 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: creativity-engine
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: creativity-config
+  namespace: creativity-engine
+data:
+  API_HOST: "0.0.0.0"
+  API_PORT: "8000"
+  LOG_LEVEL: "INFO"
+  MAIN_MODEL: "openai/gpt-5.1"
+  FAST_MODEL: "openai/gpt-5-nano"
+  MODEL_TEMPERATURE: "0.7"
+  MODEL_MAX_TOKENS: "4096"
+  MAX_CONCURRENT_TASKS: "10"
+  TASK_TIMEOUT: "600"
+  ENABLE_SIMPLE_OUTPUT: "true"
+  ENABLE_ITERATIVE_REFINEMENT: "true"
+  MAX_REFINEMENT_ITERATIONS: "3"
+  MEMORY_ACTIVATION_THRESHOLD: "0.7"
+  MEMORY_DECAY_RATE: "0.95"
+  SEMANTIC_SIMILARITY_THRESHOLD: "0.75"
+  CRITIQUE_ENSEMBLE_THRESHOLD: "0.6"
+  ENABLE_RL_TRAINING: "true"
+  TRAINING_BATCH_SIZE: "32"
+  LEARNING_RATE: "0.001"
+  ENABLE_METRICS: "true"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: creativity-secrets
+  namespace: creativity-engine
+type: Opaque
+stringData:
+  OPENROUTER_API_KEY: "your_openrouter_api_key_here"
+  PINECONE_API_KEY: "your_pinecone_api_key_here"
+  POSTGRES_PASSWORD: "your_postgres_password_here"
+  RABBITMQ_PASSWORD: "your_rabbitmq_password_here"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: creativity-api
+  namespace: creativity-engine
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: creativity-api
+  template:
+    metadata:
+      labels:
+        app: creativity-api
+    spec:
+      containers:
+      - name: api
+        image: creativity-engine:latest
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: creativity-config
+        - secretRef:
+            name: creativity-secrets
+        env:
+        - name: POSTGRES_HOST
+          value: "postgres-service"
+        - name: REDIS_HOST
+          value: "redis-service"
+        - name: RABBITMQ_HOST
+          value: "rabbitmq-service"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: creativity-worker
+  namespace: creativity-engine
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: creativity-worker
+  template:
+    metadata:
+      labels:
+        app: creativity-worker
+    spec:
+      containers:
+      - name: worker
+        image: creativity-engine:latest
+        command: ["celery", "-A", "src.processing.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+        envFrom:
+        - configMapRef:
+            name: creativity-config
+        - secretRef:
+            name: creativity-secrets
+        env:
+        - name: POSTGRES_HOST
+          value: "postgres-service"
+        - name: REDIS_HOST
+          value: "redis-service"
+        - name: RABBITMQ_HOST
+          value: "rabbitmq-service"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "4000m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: creativity-api-service
+  namespace: creativity-engine
+spec:
+  selector:
+    app: creativity-api
+  ports:
+  - port: 80
+    targetPort: 8000
+  type: LoadBalancer
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: creativity-api-hpa
+  namespace: creativity-engine
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: creativity-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: creativity-worker-hpa
+  namespace: creativity-engine
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: creativity-worker
+  minReplicas: 4
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75

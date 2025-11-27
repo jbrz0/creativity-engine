@@ -1,0 +1,196 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: creativity-engine-postgres
+    environment:
+      POSTGRES_USER: creativity_user
+      POSTGRES_PASSWORD: creativity_password_change_me
+      POSTGRES_DB: creativity_engine
+    ports:
+      - "5433:5432"  # Using 5433 on host to avoid conflict with local PostgreSQL
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U creativity_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - creativity-network
+
+  # Redis Cache & Session Storage
+  redis:
+    image: redis:7-alpine
+    container_name: creativity-engine-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - creativity-network
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: creativity-engine-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: creativity
+      RABBITMQ_DEFAULT_PASS: creativity_password_change_me
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "5672:5672"  # AMQP port
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - creativity-network
+
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: creativity-engine-api
+    environment:
+      # API Config
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      DEBUG: "true"
+      LOG_LEVEL: INFO
+
+      # OpenRouter (set your actual keys in .env file)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-your_key_here}
+      OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+
+      # Models
+      MAIN_MODEL: openai/gpt-5.1
+      FAST_MODEL: openai/gpt-5-nano
+      MODEL_TEMPERATURE: 0.7
+      MODEL_MAX_TOKENS: 4096
+
+      # Database
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: creativity_engine
+      POSTGRES_USER: creativity_user
+      POSTGRES_PASSWORD: creativity_password_change_me
+
+      # Pinecone (set your actual keys in .env file)
+      PINECONE_API_KEY: ${PINECONE_API_KEY:-your_key_here}
+      PINECONE_ENVIRONMENT: ${PINECONE_ENVIRONMENT:-us-west1-gcp}
+      PINECONE_INDEX_NAME: creativity-engine
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+
+      # RabbitMQ
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: creativity
+      RABBITMQ_PASSWORD: creativity_password_change_me
+      RABBITMQ_VHOST: /
+
+      # Processing
+      MAX_CONCURRENT_TASKS: 10
+      TASK_TIMEOUT: 600
+      ENABLE_SIMPLE_OUTPUT: "true"
+
+      # Memory
+      MEMORY_ACTIVATION_THRESHOLD: 0.7
+      MEMORY_DECAY_RATE: 0.95
+      SEMANTIC_SIMILARITY_THRESHOLD: 0.75
+
+      # Critique
+      CRITIQUE_ENSEMBLE_THRESHOLD: 0.6
+      ENABLE_ITERATIVE_REFINEMENT: "true"
+      MAX_REFINEMENT_ITERATIONS: 3
+
+      # Learning
+      ENABLE_RL_TRAINING: "true"
+      TRAINING_BATCH_SIZE: 32
+      LEARNING_RATE: 0.001
+
+      # Monitoring
+      ENABLE_METRICS: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - creativity-network
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Celery Worker for background processing
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: creativity-engine-worker
+    environment:
+      # Same environment as API
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-your_key_here}
+      MAIN_MODEL: openai/gpt-5.1
+      FAST_MODEL: openai/gpt-5-nano
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: creativity_engine
+      POSTGRES_USER: creativity_user
+      POSTGRES_PASSWORD: creativity_password_change_me
+      PINECONE_API_KEY: ${PINECONE_API_KEY:-your_key_here}
+      PINECONE_ENVIRONMENT: ${PINECONE_ENVIRONMENT:-us-west1-gcp}
+      PINECONE_INDEX_NAME: creativity-engine
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: creativity
+      RABBITMQ_PASSWORD: creativity_password_change_me
+      RABBITMQ_VHOST: /
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - creativity-network
+    command: celery -A src.processing.celery_app worker --loglevel=info --concurrency=4 -Q creativity_processing,quick_processing,celery
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+
+networks:
+  creativity-network:
+    driver: bridge
