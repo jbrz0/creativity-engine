@@ -112,6 +112,23 @@ curl -X POST "http://localhost:8000/api/v1/requests" \
   }'
 ```
 
+**Creative Output with Controls:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/requests" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_text": "Invent a new sport for low-gravity environments",
+    "output_type": "full",
+    "metadata": {
+      "controls": {
+        "randomness": 80,
+        "speculation": 90,
+        "ideas": 60
+      }
+    }
+  }'
+```
+
 ### Check Request Status
 
 ```bash

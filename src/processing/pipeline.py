@@ -12,13 +12,18 @@ from src.models.request import CreativityRequest, ProcessingStatusEnum, OutputTy
 from src.memory.retrieval import MemoryRetrieval
 from src.memory.manager import MemoryManager
 from src.agents.moment.novelty import NoveltyAgent
-from src.agents.moment.specialized import SpecializedAgent
 from src.agents.moment.mini_cae import MiniCAEAgent
 from src.agents.moment.idea_cae import IdeaCAEAgent
 from src.synthesis.orchestra import SynthesisOrchestra
 from src.synthesis.critique_ensemble import CritiqueEnsemble
 from src.synthesis.refinement import IterativeRefinement
+from src.synthesis.refinement import IterativeRefinement
 from src.api.status import broadcast_status_update
+from src.processing.creativity.preprocess import preprocess
+from src.processing.creativity.graph_stub import GraphClient
+from src.processing.creativity.graph_enrich import graph_enrich
+from src.processing.creativity.controls import map_sliders_to_params, slider_to_band
+from src.processing.creativity.prompt_augment import AugmentConfig, build_messages, _cross_domain_seeds, _fmt_insights
 
 logger = structlog.get_logger(__name__)
 
@@ -37,15 +42,17 @@ class CreativityPipeline:
         self.memory_manager = MemoryManager(db_session)
 
         # Initialize agents
-        self.novelty_agent = NoveltyAgent()
-        self.specialized_agent = SpecializedAgent()
         self.mini_cae_agent = MiniCAEAgent()
         self.idea_cae_agent = IdeaCAEAgent()
 
         # Initialize synthesis components
         self.synthesis_orchestra = SynthesisOrchestra()
         self.critique_ensemble = CritiqueEnsemble()
+        self.critique_ensemble = CritiqueEnsemble()
         self.iterative_refinement = IterativeRefinement()
+        
+        # Initialize graph client for v1 support
+        self.graph_client = GraphClient()
 
     async def process_request(self, request_id: UUID) -> Dict[str, Any]:
         """Process a complete creativity request through the pipeline.
@@ -158,13 +165,53 @@ class CreativityPipeline:
 
         logger.info("Retrieved memories", count=len(memories))
 
-        # Prepare context
+        # Prepare context with creative controls if present
+        metadata = request.input_metadata or {}
+        controls = metadata.get("controls") or metadata 
+
         context = {
             "memories": [{"content": m.content, "type": m.memory_type.value} for m in memories],
-            "user_preferences": request.input_metadata.get("preferences", {})
-            if request.input_metadata
-            else {},
+            "user_preferences": metadata.get("preferences", {}),
+            "creative_config": None
         }
+        
+        # specific creative controls logic
+        if "randomness" in controls or "speculation" in controls:
+             logger.info("Creative controls detected, preparing rich context")
+             
+             # 1. Preprocess
+             pre = preprocess(request.input_text)
+             
+             # 2. Graph Enrich
+             ge = await graph_enrich(self.graph_client, pre)
+             
+             # 3. Map controls to parameters
+             randomness = int(controls.get("randomness", 50))
+             speculation = int(controls.get("speculation", 50))
+             ideas = int(controls.get("ideas", 50))
+             
+             maps = map_sliders_to_params(randomness, speculation, ideas)
+             sampling = maps["sampling"]
+             hints = maps["kernel"]
+             
+             # 4. Generate Seeds/Insights
+             seeds = _cross_domain_seeds(pre, hints["serendipity_cross_domain_seeds"])
+             insights = _fmt_insights(ge, max_seeds=3)
+             
+             # Add to context
+             context["creative_config"] = {
+                 "enabled": True,
+                 "sampling": sampling,
+                 "kernel": hints,
+                 "seeds": seeds,
+                 "insights": insights,
+                 "graph_data": ge.fallback,
+                 "sliders": {
+                     "randomness": randomness, 
+                     "speculation": speculation, 
+                     "ideas": ideas
+                 }
+             }
 
         # 2. Moment Layer: Run all agents in parallel
         await self._update_status(
@@ -326,3 +373,5 @@ class CreativityPipeline:
             status=status.value,
             progress=progress,
         )
+
+

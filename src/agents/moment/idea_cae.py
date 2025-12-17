@@ -62,8 +62,20 @@ Format your response as JSON:
         """
         idea = input_data.get("idea") or input_data.get("input_text", "")
         previous_outputs = context.get("agent_outputs", []) if context else []
+        
+        # Check for creative config
+        creative_config = context.get("creative_config") if context else None
 
-        logger.info("IdeaCAEAgent processing idea", idea_length=len(idea))
+        # Override sampling if present
+        if creative_config and "sampling" in creative_config:
+             sampling = creative_config["sampling"]
+             temperature = sampling.get("temperature", self.temperature)
+             # Adjust temp down slightly for elaboration, but respect the slider's trend
+             temperature = max(0.4, temperature - 0.1) 
+        else:
+             temperature = self.temperature
+
+        logger.info("IdeaCAEAgent processing idea", idea_length=len(idea), temperature=temperature)
 
         # Build prompt
         user_message = f"""Comprehensively develop and enhance this creative idea:
@@ -75,13 +87,26 @@ Idea: {idea}"""
                 [f"{out.get('agent', 'Agent')}: {out.get('content', '')[:300]}" for out in previous_outputs[:3]]
             )
             user_message += f"\n\nPrevious insights:\n{context_text}"
+            
+        # Deepen development based on control config
+        if creative_config:
+            density = creative_config["sliders"]["ideas"]
+            speculation = creative_config["sliders"]["speculation"]
+            
+            user_message += f"\n\nContext Controls:\n- Idea Density Target: {density}/100\n- Speculation Level: {speculation}/100"
+            
+            if density > 70:
+                user_message += "\n\nREQUIREMENT: Provide EXTREME depth. Drill down into 5+ dimensions and implementation details."
+            
+            if speculation > 75:
+                user_message += "\n\nREQUIREMENT: Include 'What-If' scenarios that challenge the core premise of the idea."
 
         user_message += "\n\nProvide comprehensive idea development including dimensions, variations, and implementation."
 
         messages = [{"role": "user", "content": user_message}]
 
         # Generate completion
-        response_text = await self._generate_completion(messages)
+        response_text = await self._generate_completion(messages, temperature=temperature)
 
         # Parse JSON response
         try:

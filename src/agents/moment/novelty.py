@@ -59,8 +59,18 @@ Format your response as JSON:
         """
         input_text = input_data.get("input_text", "")
         memories = context.get("memories", []) if context else []
+        
+        # Check for creative config
+        creative_config = context.get("creative_config") if context else None
+        
+        # Override sampling if present
+        if creative_config and "sampling" in creative_config:
+             sampling = creative_config["sampling"]
+             temperature = sampling.get("temperature", self.temperature)
+        else:
+             temperature = self.temperature
 
-        logger.info("NoveltyAgent processing input", input_length=len(input_text))
+        logger.info("NoveltyAgent processing input", input_length=len(input_text), temperature=temperature)
 
         # Build prompt
         user_message = f"""Generate highly novel and creative ideas based on this input:
@@ -70,13 +80,32 @@ Input: {input_text}"""
         if memories:
             memory_context = "\n".join([f"- {m.get('content', '')[:200]}" for m in memories[:5]])
             user_message += f"\n\nRelevant context/memories:\n{memory_context}"
+            
+        # Inject Seeds & Insights from creative control config
+        if creative_config:
+            seeds = creative_config.get("seeds", [])
+            insights = creative_config.get("insights", "")
+            
+            if seeds:
+                user_message += f"\n\nSerendipity Seeds (use these as random stimuli):\n" + ", ".join(seeds)
+            if insights:
+                user_message += f"\n\nGraph Insights:\n{insights}"
+                
+            speculation_level = creative_config["sliders"]["speculation"]
+            if speculation_level > 60:
+                user_message += "\n\nApply HIGH SPECULATION: Take wild creative risks. Ignore conventional constraints."
+            
+            # Stochastic walk instruction
+            branches = creative_config["kernel"]["what_if_branches"]
+            if branches > 1:
+                user_message += f"\n\nExplore at least {branches} distinct 'What-if' scenarios or branches."
 
         user_message += "\n\nGenerate multiple novel ideas and unexpected connections."
 
         messages = [{"role": "user", "content": user_message}]
 
         # Generate completion
-        response_text = await self._generate_completion(messages)
+        response_text = await self._generate_completion(messages, temperature=temperature)
 
         # Parse JSON response
         try:
