@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.config import get_settings
-from src.api import health, requests, status, feedback
+from src.api import health, requests, status, feedback, billing, keys, chat
 from src.database.session import init_db, close_db
 from src.utils.logging import setup_logging
 
@@ -79,6 +79,9 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(requests.router, prefix="/api/v1", tags=["Requests"])
 app.include_router(status.router, prefix="/api/v1", tags=["Status"])
 app.include_router(feedback.router, prefix="/api/v1", tags=["Feedback"])
+app.include_router(billing.router, prefix="/api/v1", tags=["Billing"])
+app.include_router(keys.router, prefix="/api/v1", tags=["API Keys"])
+app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
 
 
 @app.get("/")

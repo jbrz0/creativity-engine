@@ -11,6 +11,10 @@ asyncpg==0.29.0
 alembic==1.13.1
 psycopg2-binary==2.9.9
 
+# Payments & Database
+stripe==8.6.0
+supabase==2.3.0
+
 # Task Queue & Caching
 redis==5.0.1
 celery==5.3.6

@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -103,6 +103,42 @@ class Settings(BaseSettings):
     enable_metrics: bool = Field(default=True, description="Enable Prometheus metrics")
     enable_tracing: bool = Field(default=False, description="Enable distributed tracing")
     sentry_dsn: Optional[str] = Field(default=None, description="Sentry DSN for error tracking")
+
+    # Supabase Configuration
+    bg_supabase_project_id: str = Field(..., description="Supabase Project ID")
+    bg_supabase_jwks_url: str = Field(..., description="Supabase JWKS URL")
+    bg_supabase_service_key: str = Field(..., description="Supabase Service Role Key")
+    bg_supabase_anon_key: str = Field(..., description="Supabase Anon Key")
+
+    # Environment Configuration
+    environment: str = Field(default="development", description="Environment (development/production)")
+
+    # Stripe Configuration (Production)
+    stripe_secret_key: Optional[str] = Field(default=None, description="Stripe Secret Key (Prod)")
+    stripe_webhook_secret: Optional[str] = Field(default=None, description="Stripe Webhook Secret (Prod)")
+    stripe_monthly_price_id: str = Field(default="price_monthly", description="Stripe Price ID for Monthly Plan (Prod)")
+    stripe_addon_price_id: str = Field(default="price_addon", description="Stripe Price ID for Add-on Credits (Prod)")
+
+    # Stripe Configuration (Development)
+    stripe_secret_key_dev: Optional[str] = Field(default=None, description="Stripe Secret Key (Dev)")
+    stripe_webhook_secret_dev: Optional[str] = Field(default=None, description="Stripe Webhook Secret (Dev)")
+    stripe_monthly_price_id_dev: Optional[str] = Field(default=None, description="Stripe Price ID for Monthly Plan (Dev)")
+    stripe_addon_price_id_dev: Optional[str] = Field(default=None, description="Stripe Price ID for Add-on Credits (Dev)")
+
+    @model_validator(mode='after')
+    def configure_stripe_environment(self) -> 'Settings':
+        """Swap Stripe keys based on environment."""
+        if self.environment.lower() == "development":
+            # If dev keys are present, use them
+            if self.stripe_secret_key_dev:
+                self.stripe_secret_key = self.stripe_secret_key_dev
+            if self.stripe_webhook_secret_dev:
+                self.stripe_webhook_secret = self.stripe_webhook_secret_dev
+            if self.stripe_monthly_price_id_dev:
+                self.stripe_monthly_price_id = self.stripe_monthly_price_id_dev
+            if self.stripe_addon_price_id_dev:
+                self.stripe_addon_price_id = self.stripe_addon_price_id_dev
+        return self
 
     @property
     def database_url(self) -> str:

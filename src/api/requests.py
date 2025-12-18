@@ -10,7 +10,9 @@ import structlog
 
 from src.database.session import get_db
 from src.models.request import CreativityRequest, ProcessingStatusEnum, OutputType
+from src.models.user import User
 from src.api.schemas import CreativityRequestCreate, CreativityRequestResponse
+from src.api.deps import verify_credits, get_current_user
 from src.processing.queue import enqueue_request
 
 logger = structlog.get_logger(__name__)
@@ -20,6 +22,7 @@ router = APIRouter()
 @router.post("/requests", response_model=CreativityRequestResponse, status_code=201)
 async def create_request(
     request_data: CreativityRequestCreate,
+    current_user: User = Depends(verify_credits), # This checks auth AND credits
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new creativity request.
@@ -36,8 +39,9 @@ async def create_request(
         output_type = OutputType.SIMPLE if request_data.output_type.lower() == "simple" else OutputType.FULL
 
         # Create request record
+        # Use authenticated user ID
         request = CreativityRequest(
-            user_id=request_data.user_id,
+            user_id=str(current_user.id),
             input_text=request_data.input_text,
             input_metadata=request_data.metadata,
             output_type=output_type,
@@ -52,7 +56,7 @@ async def create_request(
             "Created creativity request",
             request_id=str(request.id),
             output_type=output_type,
-            user_id=request_data.user_id,
+            user_id=str(current_user.id),
         )
 
         # Enqueue for processing
