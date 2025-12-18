@@ -12,11 +12,12 @@ from src.models.request import CreativityRequest, ProcessingStatusEnum, OutputTy
 from src.memory.retrieval import MemoryRetrieval
 from src.memory.manager import MemoryManager
 from src.agents.moment.novelty import NoveltyAgent
+from src.agents.moment.specialized import SpecializedAgent
 from src.agents.moment.mini_cae import MiniCAEAgent
 from src.agents.moment.idea_cae import IdeaCAEAgent
 from src.synthesis.orchestra import SynthesisOrchestra
 from src.synthesis.critique_ensemble import CritiqueEnsemble
-from src.synthesis.refinement import IterativeRefinement
+
 from src.synthesis.refinement import IterativeRefinement
 from src.api.status import broadcast_status_update
 from src.processing.creativity.preprocess import preprocess
@@ -42,12 +43,13 @@ class CreativityPipeline:
         self.memory_manager = MemoryManager(db_session)
 
         # Initialize agents
+        self.novelty_agent = NoveltyAgent()
+        self.specialized_agent = SpecializedAgent()
         self.mini_cae_agent = MiniCAEAgent()
         self.idea_cae_agent = IdeaCAEAgent()
 
         # Initialize synthesis components
         self.synthesis_orchestra = SynthesisOrchestra()
-        self.critique_ensemble = CritiqueEnsemble()
         self.critique_ensemble = CritiqueEnsemble()
         self.iterative_refinement = IterativeRefinement()
         
