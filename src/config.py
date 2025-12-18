@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # Model Configuration
     main_model: str = Field(
-        default="openai/gpt-5.1", description="Main processing model for complex tasks"
+        default="openai/gpt-5.2", description="Main processing model for complex tasks"
     )
     fast_model: str = Field(
         default="openai/gpt-5-nano", description="Fast model for quick processing"

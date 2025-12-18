@@ -41,7 +41,7 @@ The Creativity Engine implements a sophisticated multi-layer architecture inspir
 - **Vector Database**: Pinecone
 - **Task Queue**: Celery + RabbitMQ
 - **Cache**: Redis
-- **AI Models**: OpenRouter (GPT-5.1, GPT-5 Nano)
+- **AI Models**: OpenRouter (GPT-5.2, GPT-5 Nano)
 - **Deployment**: Docker, Docker Compose, Kubernetes
 
 ## Quick Start
@@ -173,12 +173,12 @@ curl -X POST "http://localhost:8000/api/v1/feedback" \
 
 The system uses two model tiers configurable via environment variables:
 
-- `MAIN_MODEL`: Primary model for complex creative tasks (default: openai/gpt-5.1)
+- `MAIN_MODEL`: Primary model for complex creative tasks (default: openai/gpt-5.2)
 - `FAST_MODEL`: Lightweight model for quick tasks (default: openai/gpt-5-nano)
 
 Change models by updating `.env`:
 ```env
-MAIN_MODEL=openai/gpt-5.1
+MAIN_MODEL=openai/gpt-5.2
 FAST_MODEL=openai/gpt-5-nano
 MODEL_TEMPERATURE=0.7
 MODEL_MAX_TOKENS=4096

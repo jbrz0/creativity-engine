@@ -46,7 +46,7 @@ Excellent! I've completed building the entire Creativity Engine system. Here's w
   Learning & Deployment:
   - ✅ RL training pipeline foundation
   - ✅ Feedback aggregation and statistics
-  - ✅ Easy model configuration (GPT-5.1 main, GPT-5 Nano fast)
+  - ✅ Easy model configuration (GPT-5.2 main, GPT-5 Nano fast)
   - ✅ Horizontal scaling support
 
   🚀 Quick Start

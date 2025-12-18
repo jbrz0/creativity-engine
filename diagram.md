@@ -97,7 +97,7 @@ graph TB
         PINECONE[(Pinecone Vector DB<br/>src/utils/pinecone_client.py<br/>Region: us-east-1)]
         REDIS[(Redis Cache<br/>Session Storage)]
 
-        MODELS["AI Models:<br/>Main: openai/gpt-5.1<br/>Fast: openai/gpt-5-nano"]
+        MODELS["AI Models:<br/>Main: openai/gpt-5.2<br/>Fast: openai/gpt-5-nano"]
     end
 
     subgraph "Database Layer - PostgreSQL"
@@ -436,7 +436,7 @@ graph TB
     subgraph "Settings Categories"
         API_CFG["API Settings<br/>- Host: 0.0.0.0<br/>- Port: 8000<br/>- Debug: true"]
 
-        MODEL_CFG["Model Settings<br/>- Main: openai/gpt-5.1<br/>- Fast: openai/gpt-5-nano<br/>- Temperature: 0.7<br/>- Max Tokens: 4096"]
+        MODEL_CFG["Model Settings<br/>- Main: openai/gpt-5.2<br/>- Fast: openai/gpt-5-nano<br/>- Temperature: 0.7<br/>- Max Tokens: 4096"]
 
         DB_CFG["Database Settings<br/>- Host: postgres<br/>- Port: 5432<br/>- DB: creativity_engine"]
 

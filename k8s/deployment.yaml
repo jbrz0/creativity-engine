@@ -13,7 +13,7 @@ data:
   API_HOST: "0.0.0.0"
   API_PORT: "8000"
   LOG_LEVEL: "INFO"
-  MAIN_MODEL: "openai/gpt-5.1"
+  MAIN_MODEL: "openai/gpt-5.2"
   FAST_MODEL: "openai/gpt-5-nano"
   MODEL_TEMPERATURE: "0.7"
   MODEL_MAX_TOKENS: "4096"

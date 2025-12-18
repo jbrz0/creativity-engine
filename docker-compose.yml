@@ -78,7 +78,7 @@ services:
       OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
 
       # Models
-      MAIN_MODEL: openai/gpt-5.1
+      MAIN_MODEL: openai/gpt-5.2
       FAST_MODEL: openai/gpt-5-nano
       MODEL_TEMPERATURE: 0.7
       MODEL_MAX_TOKENS: 4096
@@ -155,7 +155,7 @@ services:
     environment:
       # Same environment as API
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-your_key_here}
-      MAIN_MODEL: openai/gpt-5.1
+      MAIN_MODEL: openai/gpt-5.2
       FAST_MODEL: openai/gpt-5-nano
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
