@@ -12,7 +12,7 @@ from src.models.user import User, APIKey
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
@@ -27,6 +27,29 @@ async def get_current_user(
     2. X-API-Key Header: Used by external apps/scripts.
     """
     
+
+    
+    # Bypass for Testing
+    if settings.auth_bypass_mode:
+        logger.warning("Auth bypass enabled - using test user")
+        stmt = select(User).where(User.email == "test_user@example.com")
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            # Create test user
+            user = User(
+                supabase_uid="test-user-uid",
+                email="test_user@example.com",
+                monthly_credits=9999,
+                plan_type="premium"
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+            
+        return user
+
     # Method 1: API Key
     if x_api_key:
         # In a real impl, we would hash x_api_key and compare with stored hash

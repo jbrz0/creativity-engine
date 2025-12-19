@@ -10,11 +10,11 @@ services:
       POSTGRES_PASSWORD: creativity_password_change_me
       POSTGRES_DB: creativity_engine
     ports:
-      - "5433:5432"  # Using 5433 on host to avoid conflict with local PostgreSQL
+      - "5433:5432" # Using 5433 on host to avoid conflict with local PostgreSQL
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U creativity_user"]
+      test: [ "CMD-SHELL", "pg_isready -U creativity_user -d creativity_engine" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,7 +31,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -47,12 +47,12 @@ services:
       RABBITMQ_DEFAULT_PASS: creativity_password_change_me
       RABBITMQ_DEFAULT_VHOST: /
     ports:
-      - "5672:5672"  # AMQP port
-      - "15672:15672"  # Management UI
+      - "5672:5672" # AMQP port
+      - "15672:15672" # Management UI
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      test: [ "CMD", "rabbitmq-diagnostics", "ping" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -84,11 +84,11 @@ services:
       MODEL_MAX_TOKENS: 4096
 
       # Database
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: creativity_engine
-      POSTGRES_USER: creativity_user
-      POSTGRES_PASSWORD: creativity_password_change_me
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-creativity_engine}
+      POSTGRES_USER: ${POSTGRES_USER:-creativity_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-creativity_password_change_me}
 
       # Pinecone (set your actual keys in .env file)
       PINECONE_API_KEY: ${PINECONE_API_KEY:-your_key_here}
@@ -129,6 +129,26 @@ services:
 
       # Monitoring
       ENABLE_METRICS: "true"
+
+      # Supabase
+      BG_SUPABASE_PROJECT_ID: ${BG_SUPABASE_PROJECT_ID}
+      BG_SUPABASE_JWKS_URL: ${BG_SUPABASE_JWKS_URL}
+      BG_SUPABASE_SERVICE_KEY: ${BG_SUPABASE_SERVICE_KEY}
+      BG_SUPABASE_ANON_KEY: ${BG_SUPABASE_ANON_KEY}
+
+      # Stripe
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_MONTHLY_PRICE_ID: ${STRIPE_MONTHLY_PRICE_ID:-price_monthly}
+      STRIPE_ADDON_PRICE_ID: ${STRIPE_ADDON_PRICE_ID:-price_addon}
+
+      # Environment & Dev Overrides
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      STRIPE_SECRET_KEY_DEV: ${STRIPE_SECRET_KEY_DEV:-}
+      STRIPE_WEBHOOK_SECRET_DEV: ${STRIPE_WEBHOOK_SECRET_DEV:-}
+      STRIPE_MONTHLY_PRICE_ID_DEV: ${STRIPE_MONTHLY_PRICE_ID_DEV:-}
+      STRIPE_ADDON_PRICE_ID_DEV: ${STRIPE_ADDON_PRICE_ID_DEV:-}
+      AUTH_BYPASS_MODE: ${AUTH_BYPASS_MODE:-false}
     ports:
       - "8000:8000"
     volumes:
@@ -143,6 +163,7 @@ services:
         condition: service_healthy
     networks:
       - creativity-network
+
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 
   # Celery Worker for background processing
@@ -157,11 +178,11 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-your_key_here}
       MAIN_MODEL: openai/gpt-5.2
       FAST_MODEL: openai/gpt-5-nano
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: creativity_engine
-      POSTGRES_USER: creativity_user
-      POSTGRES_PASSWORD: creativity_password_change_me
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-creativity_engine}
+      POSTGRES_USER: ${POSTGRES_USER:-creativity_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-creativity_password_change_me}
       PINECONE_API_KEY: ${PINECONE_API_KEY:-your_key_here}
       PINECONE_ENVIRONMENT: ${PINECONE_ENVIRONMENT:-us-west1-gcp}
       PINECONE_INDEX_NAME: creativity-engine
@@ -172,6 +193,26 @@ services:
       RABBITMQ_USER: creativity
       RABBITMQ_PASSWORD: creativity_password_change_me
       RABBITMQ_VHOST: /
+
+      # Supabase
+      BG_SUPABASE_PROJECT_ID: ${BG_SUPABASE_PROJECT_ID}
+      BG_SUPABASE_JWKS_URL: ${BG_SUPABASE_JWKS_URL}
+      BG_SUPABASE_SERVICE_KEY: ${BG_SUPABASE_SERVICE_KEY}
+      BG_SUPABASE_ANON_KEY: ${BG_SUPABASE_ANON_KEY}
+
+      # Stripe
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_MONTHLY_PRICE_ID: ${STRIPE_MONTHLY_PRICE_ID:-price_monthly}
+      STRIPE_ADDON_PRICE_ID: ${STRIPE_ADDON_PRICE_ID:-price_addon}
+
+      # Environment & Dev Overrides
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      STRIPE_SECRET_KEY_DEV: ${STRIPE_SECRET_KEY_DEV:-}
+      STRIPE_WEBHOOK_SECRET_DEV: ${STRIPE_WEBHOOK_SECRET_DEV:-}
+      STRIPE_MONTHLY_PRICE_ID_DEV: ${STRIPE_MONTHLY_PRICE_ID_DEV:-}
+      STRIPE_ADDON_PRICE_ID_DEV: ${STRIPE_ADDON_PRICE_ID_DEV:-}
+      AUTH_BYPASS_MODE: ${AUTH_BYPASS_MODE:-false}
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
@@ -190,6 +231,7 @@ volumes:
   postgres_data:
   redis_data:
   rabbitmq_data:
+
 
 networks:
   creativity-network:

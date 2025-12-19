@@ -112,6 +112,7 @@ class Settings(BaseSettings):
 
     # Environment Configuration
     environment: str = Field(default="development", description="Environment (development/production)")
+    auth_bypass_mode: bool = Field(default=False, description="Bypass authentication for testing")
 
     # Stripe Configuration (Production)
     stripe_secret_key: Optional[str] = Field(default=None, description="Stripe Secret Key (Prod)")
