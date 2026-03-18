@@ -1,0 +1,949 @@
+{
+  "name": "Creativity Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🧠 Creativity Engine — n8n Workflow\n\n### Setup Instructions\n\n1. **Telegram Bot**: Create a bot via @BotFather, get the token\n2. **Telegram Credential**: Create a \"Telegram API\" credential in n8n with your bot token\n3. **OpenRouter API Key**: Get one from https://openrouter.ai/keys\n4. **Header Auth Credential**: Create an \"HTTP Header Auth\" credential:\n   - **Name**: `Authorization`\n   - **Value**: `Bearer YOUR_OPENROUTER_API_KEY`\n   - Name the credential \"OpenRouter API\"\n\n### Pipeline Flow\n```\nTelegram → Preprocess & Build Prompts\n  → 4 Parallel Creative Agents (Opus 4, Gemini 2.5 Pro, GPT-4.1, Flash)\n  → Synthesis (Opus 4)\n  → 4 Parallel Critique Agents (Flash)\n  → Ensemble Scoring\n  → Conditional Refinement (Opus 4, if score < 0.6)\n  → Telegram Response\n```\n\n### Models (via OpenRouter)\n- **NoveltyAgent**: anthropic/claude-opus-4 (temp ~0.95)\n- **SpecializedAgent**: google/gemini-2.5-pro (temp 0.7)\n- **MiniCAEAgent**: google/gemini-2.0-flash-001 (temp 0.6)\n- **IdeaCAEAgent**: openai/gpt-4.1 (temp 0.75)\n- **Synthesis & Refinement**: anthropic/claude-opus-4\n- **All Critiques**: google/gemini-2.0-flash-001\n\n### Creativity Controls (hardcoded high)\n- Randomness: 85/100 → temp ~1.1, diverse sampling\n- Speculation: 90/100 → 4 what-if branches, 2 layers deep\n- Ideas: 80/100 → ~12 ideas, low convergence bias"
+      },
+      "id": "setup-note",
+      "name": "Setup Instructions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "creativity-engine-webhook",
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// ── Stopwords ──\nconst SW = new Set(['a','an','the','and','or','but','if','then','else','for','of','to','in','on','with','by','as','at','from','is','are','was','were','be','being','been','it','this','that','these','those','i','you','we','they','he','she','them','us','our','my','your','their','me','him','her','what','which','who','whom','about','into','over','under','between','within','without','can','could','should','would','may','might','will','shall','do','does','did','have','has','had','so','just','not','no','yes','also','very','really','much','more','most','some','any','all','each','every','own','such','only','other','than','too','even','well','back','still','way','take','come','make','like','long','look','many','get','use','know','want','say','see','try','one','two']);\n\n// ── Serendipity Corpus (cross-domain inspiration seeds) ──\nconst CORPUS = [\n  'Consider the role of entropy in information systems and how disorder creates new possibilities for order.',\n  'Biological mimicry often yields robust engineering solutions—nature has had billions of years to optimize.',\n  'Fractal patterns appear in both nature and data structures, suggesting self-similarity is a universal principle.',\n  'The map is not the territory; the model is not the reality—what assumptions are you baking in?',\n  'Feedback loops can stabilize or destabilize depending on delay, gain, and the observer.',\n  'Constraint breeds creativity—the sonnet form produced Shakespeare\\'s greatest expressions of the human condition.',\n  'Navigate the space between order and chaos—the edge of complexity is where emergence happens.',\n  'Cross-pollination between unrelated fields has produced most of humanity\\'s breakthrough innovations.',\n  'Invert every assumption and start from the opposite end—what would that look like?',\n  'The adjacent possible defines what innovations can emerge next from the current state of knowledge.',\n  'Negative space is as important as positive space—what\\'s missing tells you as much as what\\'s present.',\n  'Systems thinking reveals that local optimizations often degrade global performance dramatically.',\n  'Metaphors are not just literary devices; they are cognitive tools that shape how we frame and solve problems.',\n  'Emergence occurs when simple rules interacting produce complex, unpredictable, and beautiful behaviors.',\n  'The most creative solutions often come from misapplying a tool from one domain to an entirely different one.',\n  'Tension between opposing forces (thesis/antithesis) often produces superior synthesis—dialectical creativity.',\n  'Resilience comes not from rigidity but from adaptive flexibility, redundancy, and graceful degradation.',\n  'What if time ran backwards? How would this process look in reverse? What would we notice first?',\n  'The boundary between categories is often where the most interesting and novel phenomena occur.',\n  'Stochastic resonance: sometimes adding noise actually improves signal detection and pattern recognition.',\n  'Hofstadter\\'s law: it always takes longer than you expect, even when you account for Hofstadter\\'s law.',\n  'The Pareto frontier reveals that optimizing one dimension necessarily trades off against others.',\n  'Stigmergy—indirect coordination through environment modification—explains ant colonies and Wikipedia alike.',\n  'What would a civilization that evolved underwater think about this problem differently?',\n  'The strongest structures in nature use tension and compression in dynamic balance—tensegrity.',\n  'Every expert was once a beginner who asked questions that seemed too simple to ask.',\n  'Serendipity is not random—it favors the prepared mind that can recognize unexpected connections.',\n  'The medium shapes the message: the tool you use to think literally changes what thoughts are possible.',\n  'In complex adaptive systems, the agents and the environment co-evolve in unpredictable ways.',\n  'What would this look like at 1000x scale? At 1/1000th scale? Scale reveals hidden structure.'\n];\n\n// ── Text Processing Functions ──\nfunction normalize(t) {\n  return t.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').replace(/[ \\t]+/g, ' ').replace(/\\n{3,}/g, '\\n\\n').trim();\n}\n\nfunction extractKeywords(text, max = 40) {\n  const freq = {};\n  text.toLowerCase().split(/[^\\w\\-']+/).filter(w => w && w.length > 2 && !SW.has(w)).forEach(w => { freq[w] = (freq[w] || 0) + 1; });\n  return Object.entries(freq).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, max).map(([w]) => w);\n}\n\nfunction extractSentences(text) {\n  const s = text.split(/(?<=[.!?])\\s+/).filter(s => s.trim());\n  return s.length > 0 ? s : [text];\n}\n\nfunction cooccurrencePairs(sentences, keywords, maxPairs = 200) {\n  const ks = new Set(keywords);\n  const pairs = [];\n  for (const s of sentences) {\n    const present = [...new Set(s.toLowerCase().split(/[^\\w\\-']+/).filter(w => ks.has(w)))];\n    for (let i = 0; i < present.length; i++) {\n      for (let j = i + 1; j < present.length; j++) {\n        if (present[i] !== present[j]) {\n          pairs.push([present[i], present[j]]);\n          if (pairs.length >= maxPairs) return pairs;\n        }\n      }\n    }\n  }\n  return pairs;\n}\n\n// ── Graph Element Extraction (keyword-based, no spaCy needed) ──\nfunction extractGraphElements(keywords, pairs) {\n  const nodes = [...new Set(keywords)].slice(0, 160);\n  const rels = pairs.slice(0, 240).map(([a, b]) => ({ src: a, rel: 'RELATED', dst: b }));\n  const nodeSet = new Set(nodes.map(n => n.toLowerCase()));\n  for (const r of rels) {\n    if (!nodeSet.has(r.src.toLowerCase())) { nodeSet.add(r.src.toLowerCase()); nodes.push(r.src); }\n    if (!nodeSet.has(r.dst.toLowerCase())) { nodeSet.add(r.dst.toLowerCase()); nodes.push(r.dst); }\n  }\n  return { nodes: nodes.slice(0, 160), relationships: rels.slice(0, 240) };\n}\n\n// ── Creativity Control Mapping (port of controls.py) ──\nfunction sliderToBand(value, minB = 1, maxB = 10) {\n  const v = Math.max(0, Math.min(100, value));\n  return Math.floor(minB + ((maxB - minB) * (v / 100)));\n}\n\nfunction mapSliders(randomness, speculation, ideas) {\n  // Randomness → Sampling parameters\n  const randBand = sliderToBand(randomness, 1, 10);\n  let temp = 0.6 + (0.6 * ((randBand - 1) / 9));\n  temp = Math.min(1.2, Math.max(0.1, temp));\n  const top_p = Math.min(0.99, 0.85 + (0.14 * (randomness / 100)));\n  const presence_penalty = 0.5 * (randomness / 100);\n  const frequency_penalty = 0.5 * (randomness / 100);\n\n  // Speculation → Branches/Layers\n  const specBand = sliderToBand(speculation, 1, 10);\n  let branches = 1, layers = 1;\n  if (specBand > 3) branches = 2;\n  if (specBand > 6) { branches = 3; layers = 2; }\n  if (specBand > 8) { branches = 4; layers = 2; }\n\n  // Ideas → Count/Density\n  const ideaCount = sliderToBand(ideas, 3, 15);\n  const convergeBias = 1.0 - (ideas / 100);\n  const seedsCount = sliderToBand(Math.floor((randomness + speculation) / 2), 0, 8);\n  let graphHops = 1;\n  if (speculation > 50) graphHops = 2;\n  if (speculation > 80) graphHops = 3;\n\n  return {\n    sampling: { temperature: temp, top_p, presence_penalty, frequency_penalty },\n    kernel: { branches, layers, ideaCount, convergeBias, seedsCount, graphHops }\n  };\n}\n\n// ── Serendipity Seeds (word-overlap heuristic) ──\nfunction getSeeds(prompt, k) {\n  if (k <= 0) return [];\n  const toks = new Set((prompt.toLowerCase().match(/[a-z0-9-]+/g) || []).filter(w => w.length > 2));\n  const scored = CORPUS.map(line => {\n    const words = new Set((line.toLowerCase().match(/[a-z0-9-]+/g) || []).filter(w => w.length > 2));\n    let overlap = 0;\n    for (const t of toks) if (words.has(t)) overlap++;\n    return { score: overlap, line };\n  });\n  scored.sort((a, b) => b.score - a.score);\n  if (scored[0] && scored[0].score <= 0) {\n    // Shuffle if no overlap\n    for (let i = scored.length - 1; i > 0; i--) {\n      const j = Math.floor(Math.random() * (i + 1));\n      [scored[i], scored[j]] = [scored[j], scored[i]];\n    }\n  }\n  return scored.slice(0, k).map(s => s.line);\n}\n\n// ── Graph Insights Formatting ──\nfunction formatInsights(graph, maxSeeds = 5) {\n  const parts = [];\n  // Use keyword frequency as importance proxy\n  const topNodes = graph.nodes.slice(0, maxSeeds);\n  if (topNodes.length) parts.push('- Central concepts: ' + topNodes.join(', '));\n  const bridges = graph.relationships.slice(0, maxSeeds).map(r => r.src + ' ↔ ' + r.dst);\n  if (bridges.length) parts.push('- Bridge paths: ' + bridges.join(', '));\n  parts.push('- Graph size: ' + graph.nodes.length + ' nodes, ' + graph.relationships.length + ' edges');\n  return parts.join('\\n');\n}\n\n// ══════════════════════════════════════════════\n// MAIN PROCESSING\n// ══════════════════════════════════════════════\nconst inputText = $input.first().json.message?.text || $input.first().json.text || '';\nconst chatId = $input.first().json.message?.chat?.id || $input.first().json.chat_id || '';\n\n// 1. Preprocess\nconst cleaned = normalize(inputText);\nconst sentences = extractSentences(cleaned);\nconst keywords = extractKeywords(cleaned, 40);\nconst pairs = cooccurrencePairs(sentences, keywords);\nconst graph = extractGraphElements(keywords, pairs);\n\n// 2. Map creativity controls (high creativity defaults)\nconst randomness = 85, speculation = 90, ideas = 80;\nconst params = mapSliders(randomness, speculation, ideas);\n\n// 3. Generate seeds & insights\nconst seeds = getSeeds(cleaned, params.kernel.seedsCount);\nconst insights = formatInsights(graph, 5);\n\n// ══════════════════════════════════════════════\n// BUILD AGENT PROMPTS\n// ══════════════════════════════════════════════\n\n// ── Shared creative config injection ──\nfunction creativeSuffix() {\n  let s = '';\n  if (seeds.length) s += '\\n\\nSerendipity Seeds (use as random cross-domain stimuli):\\n' + seeds.join('\\n');\n  if (insights) s += '\\n\\nGraph Insights:\\n' + insights;\n  if (speculation > 60) s += '\\n\\nApply HIGH SPECULATION: Take bold creative risks. Ignore conventional constraints.';\n  if (params.kernel.branches > 1) s += '\\n\\nExplore at least ' + params.kernel.branches + ' distinct What-if scenarios or stochastic branches.';\n  return s;\n}\n\n// ── NOVELTY AGENT (Claude Opus 4, temp 0.95) ──\nconst noveltySystem = 'You are a Novelty Agent in an advanced creativity engine. Your purpose is to generate highly novel, unexpected, and creative ideas.\\n\\nCore principles:\\n- Push boundaries and explore unconventional combinations\\n- Break patterns and challenge assumptions\\n- Generate surprising connections and analogies\\n- Prioritize originality over convention\\n- Think laterally and divergently\\n\\nWhen generating ideas:\\n1. Identify unexpected connections\\n2. Combine disparate concepts\\n3. Invert common assumptions\\n4. Explore metaphorical spaces\\n5. Generate multiple novel angles\\n\\nFormat your response as JSON:\\n{\\n  \"ideas\": [\"idea1\", \"idea2\", \"idea3\"],\\n  \"novel_connections\": [\"connection1\", \"connection2\"],\\n  \"confidence\": 0.85,\\n  \"reasoning\": \"Brief explanation of your creative process\"\\n}';\n\nconst noveltyUser = 'Generate highly novel and creative ideas based on this input:\\n\\nInput: ' + cleaned + creativeSuffix() + '\\n\\nGenerate multiple novel ideas and unexpected connections.';\n\n// ── SPECIALIZED AGENT (Gemini 2.5 Pro, temp 0.7) ──\nconst specializedSystem = 'You are a Specialized Agent in an advanced creativity engine. Your purpose is to provide expert, domain-focused creative insights.\\n\\nCore principles:\\n- Apply deep domain knowledge\\n- Use field-specific techniques and conventions\\n- Reference relevant precedents and examples\\n- Balance creativity with domain expertise\\n- Provide technically sound suggestions\\n\\nWhen processing:\\n1. Identify domain-specific patterns\\n2. Apply relevant techniques\\n3. Reference field conventions\\n4. Suggest expert-level refinements\\n5. Consider audience and context\\n\\nFormat your response as JSON:\\n{\\n  \"analysis\": \"Domain-specific analysis\",\\n  \"suggestions\": [\"suggestion1\", \"suggestion2\", \"suggestion3\"],\\n  \"techniques\": [\"technique1\", \"technique2\"],\\n  \"confidence\": 0.85,\\n  \"reasoning\": \"Brief explanation\"\\n}';\n\nconst specializedUser = 'Provide expert, domain-focused creative analysis and suggestions:\\n\\nDomain: general creative\\nInput: ' + cleaned + '\\n\\nProvide domain-specific analysis, techniques, and suggestions.';\n\n// ── MINI-CAE AGENT (Gemini 2.0 Flash, temp 0.6) ──\nconst miniCaeSystem = 'You are a Mini-CAE (Creative Analysis and Enhancement) Agent in an advanced creativity engine. Your purpose is to provide focused, rapid creative analysis and enhancement.\\n\\nCore principles:\\n- Quick, actionable insights\\n- Focus on immediate improvements\\n- Identify key strengths and weaknesses\\n- Suggest specific enhancements\\n- Maintain creative momentum\\n\\nWhen analyzing:\\n1. Identify core creative elements\\n2. Highlight strengths\\n3. Spot improvement opportunities\\n4. Suggest specific enhancements\\n5. Maintain original intent\\n\\nFormat your response as JSON:\\n{\\n  \"strengths\": [\"strength1\", \"strength2\"],\\n  \"opportunities\": [\"opportunity1\", \"opportunity2\"],\\n  \"enhancements\": [\"enhancement1\", \"enhancement2\"],\\n  \"confidence\": 0.85,\\n  \"reasoning\": \"Brief explanation\"\\n}';\n\nconst miniCaeUser = 'Analyze this creative content and suggest enhancements:\\n\\nContent: ' + cleaned + '\\n\\nProvide:\\n1. Key strengths of this content\\n2. Opportunities for improvement\\n3. Specific enhancement suggestions';\n\n// ── IDEA-CAE AGENT (GPT-4.1, temp 0.75) ──\nconst ideaCaeSystem = 'You are an Idea-CAE (Creative Analysis and Enhancement) Agent in an advanced creativity engine. Your purpose is to deeply develop and enhance creative ideas.\\n\\nCore principles:\\n- Comprehensive idea exploration\\n- Multi-dimensional development\\n- Consider implications and variations\\n- Build depth and richness\\n- Maintain creative coherence\\n\\nWhen developing ideas:\\n1. Expand the core concept\\n2. Explore multiple dimensions\\n3. Consider variations and alternatives\\n4. Develop supporting elements\\n5. Create implementation pathways\\n\\nFormat your response as JSON:\\n{\\n  \"core_concept\": \"Refined core idea\",\\n  \"dimensions\": [\"dimension1\", \"dimension2\", \"dimension3\"],\\n  \"variations\": [\"variation1\", \"variation2\"],\\n  \"supporting_elements\": [\"element1\", \"element2\"],\\n  \"implementation\": [\"step1\", \"step2\"],\\n  \"confidence\": 0.85,\\n  \"reasoning\": \"Brief explanation\"\\n}';\n\nlet ideaCaeUser = 'Comprehensively develop and enhance this creative idea:\\n\\nIdea: ' + cleaned;\nideaCaeUser += '\\n\\nContext Controls:\\n- Idea Density Target: ' + ideas + '/100\\n- Speculation Level: ' + speculation + '/100';\nif (ideas > 70) ideaCaeUser += '\\n\\nREQUIREMENT: Provide EXTREME depth. Drill down into 5+ dimensions and implementation details.';\nif (speculation > 75) ideaCaeUser += '\\n\\nREQUIREMENT: Include What-If scenarios that challenge the core premise of the idea.';\nideaCaeUser += '\\n\\nProvide comprehensive idea development including dimensions, variations, and implementation.';\n\n// ══════════════════════════════════════════════\n// BUILD HTTP REQUEST BODIES\n// ══════════════════════════════════════════════\nconst noveltyBody = {\n  model: 'anthropic/claude-opus-4',\n  messages: [{ role: 'system', content: noveltySystem }, { role: 'user', content: noveltyUser }],\n  temperature: Math.min(1.2, params.sampling.temperature + 0.15),\n  top_p: params.sampling.top_p,\n  presence_penalty: params.sampling.presence_penalty,\n  frequency_penalty: params.sampling.frequency_penalty,\n  max_tokens: 4096\n};\n\nconst specializedBody = {\n  model: 'google/gemini-2.5-pro',\n  messages: [{ role: 'system', content: specializedSystem }, { role: 'user', content: specializedUser }],\n  temperature: 0.7,\n  max_tokens: 4096\n};\n\nconst miniCaeBody = {\n  model: 'google/gemini-2.0-flash-001',\n  messages: [{ role: 'system', content: miniCaeSystem }, { role: 'user', content: miniCaeUser }],\n  temperature: 0.6,\n  max_tokens: 4096\n};\n\nconst ideaCaeBody = {\n  model: 'openai/gpt-4.1',\n  messages: [{ role: 'system', content: ideaCaeSystem }, { role: 'user', content: ideaCaeUser }],\n  temperature: Math.max(0.4, params.sampling.temperature - 0.1),\n  max_tokens: 4096\n};\n\nreturn [{\n  json: {\n    chatId,\n    originalInput: inputText,\n    cleaned,\n    keywords,\n    seeds,\n    insights,\n    sampling: params.sampling,\n    kernel: params.kernel,\n    noveltyBody,\n    specializedBody,\n    miniCaeBody,\n    ideaCaeBody\n  }\n}];\n"
+      },
+      "id": "preprocess",
+      "name": "Preprocess & Build Prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "HTTP-Referer",
+              "value": "https://creativity-engine.n8n.local"
+            },
+            {
+              "name": "X-Title",
+              "value": "Creativity Engine"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.noveltyBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "novelty-agent",
+      "name": "Novelty Agent (Opus 4)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        580,
+        40
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "HTTP-Referer",
+              "value": "https://creativity-engine.n8n.local"
+            },
+            {
+              "name": "X-Title",
+              "value": "Creativity Engine"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.specializedBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "specialized-agent",
+      "name": "Specialized Agent (Gemini 2.5 Pro)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        580,
+        220
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "HTTP-Referer",
+              "value": "https://creativity-engine.n8n.local"
+            },
+            {
+              "name": "X-Title",
+              "value": "Creativity Engine"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.miniCaeBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "minicae-agent",
+      "name": "MiniCAE Agent (Flash)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        580,
+        400
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "HTTP-Referer",
+              "value": "https://creativity-engine.n8n.local"
+            },
+            {
+              "name": "X-Title",
+              "value": "Creativity Engine"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ideaCaeBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "ideacae-agent",
+      "name": "IdeaCAE Agent (GPT-4.1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        580,
+        580
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      },
+      "id": "merge-agents",
+      "name": "Merge Agent Outputs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// Extract agent responses from the 4 merged inputs\nconst items = $input.all();\nconst agentOutputs = [];\n\nfor (const item of items) {\n  try {\n    const data = item.json;\n    // Handle both raw HTTP response and parsed JSON\n    let content = '';\n    let agentName = 'Unknown';\n\n    if (data.choices && data.choices[0]) {\n      content = data.choices[0].message.content;\n    } else if (data.data && data.data.choices) {\n      content = data.data.choices[0].message.content;\n    } else if (data.content) {\n      content = data.content;\n    } else {\n      content = JSON.stringify(data).substring(0, 2000);\n    }\n\n    // Try to parse JSON from the content\n    let parsed = null;\n    try {\n      // Sometimes models wrap JSON in markdown code blocks\n      const jsonMatch = content.match(/\\`\\`\\`json?\\n?([\\s\\S]*?)\\`\\`\\`/);\n      const toParse = jsonMatch ? jsonMatch[1] : content;\n      parsed = JSON.parse(toParse);\n    } catch (e) {\n      parsed = null;\n    }\n\n    // Determine agent from the model used or content structure\n    if (parsed) {\n      if (parsed.ideas) agentName = 'NoveltyAgent';\n      else if (parsed.analysis && parsed.techniques) agentName = 'SpecializedAgent';\n      else if (parsed.strengths && parsed.enhancements) agentName = 'MiniCAEAgent';\n      else if (parsed.core_concept) agentName = 'IdeaCAEAgent';\n    }\n\n    // Format content for synthesis\n    let formatted = content;\n    if (parsed) {\n      if (parsed.ideas) {\n        formatted = 'Novel Ideas:\\n' + parsed.ideas.map(i => '- ' + i).join('\\n');\n        if (parsed.novel_connections) formatted += '\\n\\nNovel Connections:\\n' + parsed.novel_connections.map(c => '- ' + c).join('\\n');\n      } else if (parsed.analysis) {\n        formatted = 'Domain Analysis:\\n' + parsed.analysis + '\\n\\nSuggestions:\\n' + (parsed.suggestions || []).map(s => '- ' + s).join('\\n');\n        if (parsed.techniques) formatted += '\\n\\nTechniques:\\n' + parsed.techniques.map(t => '- ' + t).join('\\n');\n      } else if (parsed.strengths) {\n        formatted = 'Strengths:\\n' + parsed.strengths.map(s => '- ' + s).join('\\n');\n        formatted += '\\n\\nOpportunities:\\n' + (parsed.opportunities || []).map(o => '- ' + o).join('\\n');\n        formatted += '\\n\\nEnhancements:\\n' + (parsed.enhancements || []).map(e => '- ' + e).join('\\n');\n      } else if (parsed.core_concept) {\n        formatted = 'Core Concept:\\n' + parsed.core_concept;\n        formatted += '\\n\\nDimensions:\\n' + (parsed.dimensions || []).map(d => '- ' + d).join('\\n');\n        if (parsed.variations) formatted += '\\n\\nVariations:\\n' + parsed.variations.map(v => '- ' + v).join('\\n');\n        if (parsed.implementation) formatted += '\\n\\nImplementation:\\n' + parsed.implementation.map((s, i) => (i + 1) + '. ' + s).join('\\n');\n      }\n    }\n\n    const confidence = parsed?.confidence || 0.7;\n    agentOutputs.push({ agentName, content: formatted, confidence });\n  } catch (e) {\n    // Skip failed agent outputs\n  }\n}\n\n// Get original input from the preprocess node\nconst originalInput = $('Preprocess & Build Prompts').item.json.originalInput;\nconst chatId = $('Preprocess & Build Prompts').item.json.chatId;\n\n// Build synthesis prompt\nconst outputsText = agentOutputs.map(a =>\n  '[' + a.agentName + '] (Confidence: ' + a.confidence.toFixed(2) + ')\\n' + a.content\n).join('\\n\\n---\\n\\n');\n\nconst synthSystem = 'You are an expert at synthesizing creative outputs into cohesive, polished results. You take the best ideas from multiple creative agents and weave them into a unified, rich, and actionable output.';\n\nconst synthUser = 'Synthesize these creative outputs into a comprehensive, cohesive result:\\n\\n' + outputsText + '\\n\\nCreate a synthesis that:\\n1. Incorporates the best ideas from each agent\\n2. Maintains creative coherence and flow\\n3. Builds depth and richness—go deep, not shallow\\n4. Resolves any conflicts or redundancies elegantly\\n5. Produces a polished, unified creative output that is MORE than the sum of its parts\\n\\nProvide the synthesized creative output:';\n\nconst synthesisBody = {\n  model: 'anthropic/claude-opus-4',\n  messages: [\n    { role: 'system', content: synthSystem },\n    { role: 'user', content: synthUser }\n  ],\n  temperature: 0.7,\n  max_tokens: 8192\n};\n\nreturn [{\n  json: {\n    chatId,\n    originalInput,\n    agentOutputs,\n    synthesisBody\n  }\n}];\n"
+      },
+      "id": "build-synthesis",
+      "name": "Build Synthesis Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "HTTP-Referer",
+              "value": "https://creativity-engine.n8n.local"
+            },
+            {
+              "name": "X-Title",
+              "value": "Creativity Engine"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.synthesisBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "synthesis-call",
+      "name": "Synthesis (Opus 4)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// Extract synthesis output\nconst synthResponse = $input.first().json;\nlet synthesized = '';\nif (synthResponse.choices && synthResponse.choices[0]) {\n  synthesized = synthResponse.choices[0].message.content;\n} else if (synthResponse.data && synthResponse.data.choices) {\n  synthesized = synthResponse.data.choices[0].message.content;\n} else {\n  synthesized = JSON.stringify(synthResponse).substring(0, 4000);\n}\n\nconst originalInput = $('Build Synthesis Prompt').item.json.originalInput;\nconst chatId = $('Build Synthesis Prompt').item.json.chatId;\n\n// ── NOVELTY CRITIQUE ──\nconst noveltySys = 'You are a Novelty Critique Agent. Evaluate the novelty, originality, and uniqueness of creative outputs.\\n\\nEvaluation criteria: Originality, Unexpectedness, Pattern breaking, Fresh perspective, Innovation.\\n\\nFormat response as JSON:\\n{\\n  \"novelty_score\": 0.85,\\n  \"novel_elements\": [\"element1\"],\\n  \"suggestions\": [\"suggestion1\"],\\n  \"confidence\": 0.9\\n}';\nconst noveltyUser = 'Evaluate the novelty and originality of this creative output:\\n\\nContent to evaluate: ' + synthesized + '\\n\\nOriginal input: ' + originalInput + '\\n\\nProvide a comprehensive novelty evaluation with score and suggestions.';\n\n// ── COHERENCE CRITIQUE ──\nconst coherenceSys = 'You are a Coherence Critique Agent. Evaluate the logical consistency, flow, and internal coherence of creative outputs.\\n\\nEvaluation criteria: Internal consistency, Logical flow, Structural integrity, Clarity, Unity.\\n\\nFormat response as JSON:\\n{\\n  \"coherence_score\": 0.85,\\n  \"strengths\": [\"strength1\"],\\n  \"inconsistencies\": [\"issue1\"],\\n  \"suggestions\": [\"suggestion1\"],\\n  \"confidence\": 0.9\\n}';\nconst coherenceUser = 'Evaluate the coherence, consistency, and logical flow of this creative output:\\n\\nContent to evaluate: ' + synthesized + '\\n\\nProvide a comprehensive coherence evaluation with score and suggestions.';\n\n// ── RELEVANCE CRITIQUE ──\nconst relevanceSys = 'You are a Relevance Critique Agent. Evaluate how well creative outputs address the input, goals, and context.\\n\\nEvaluation criteria: Input alignment, Goal fulfillment, Context appropriateness, Practical applicability.\\n\\nFormat response as JSON:\\n{\\n  \"relevance_score\": 0.85,\\n  \"aligned_elements\": [\"element1\"],\\n  \"divergences\": [\"gap1\"],\\n  \"suggestions\": [\"suggestion1\"],\\n  \"confidence\": 0.9\\n}';\nconst relevanceUser = 'Evaluate the relevance of this creative output to the original input:\\n\\nContent to evaluate: ' + synthesized + '\\n\\nOriginal input: ' + originalInput + '\\n\\nProvide a comprehensive relevance evaluation with score and suggestions.';\n\n// ── PERSONALIZATION CRITIQUE ──\nconst personalSys = 'You are a Personalized Critique Agent. Evaluate how well creative outputs match quality standards, engagement, and depth.\\n\\nEvaluation criteria: Depth of insight, Engagement quality, Actionability, Tone appropriateness, Personal resonance.\\n\\nFormat response as JSON:\\n{\\n  \"personalization_score\": 0.85,\\n  \"style_matches\": [\"match1\"],\\n  \"suggestions\": [\"suggestion1\"],\\n  \"confidence\": 0.9\\n}';\nconst personalUser = 'Evaluate the quality, depth, and engagement of this creative output:\\n\\nContent to evaluate: ' + synthesized + '\\n\\nProvide a comprehensive quality evaluation with score and suggestions.';\n\nconst critiqueModel = 'google/gemini-2.0-flash-001';\n\nreturn [{\n  json: {\n    chatId,\n    originalInput,\n    synthesized,\n    noveltyCritiqueBody: {\n      model: critiqueModel,\n      messages: [{ role: 'system', content: noveltySys }, { role: 'user', content: noveltyUser }],\n      temperature: 0.5, max_tokens: 2048\n    },\n    coherenceCritiqueBody: {\n      model: critiqueModel,\n      messages: [{ role: 'system', content: coherenceSys }, { role: 'user', content: coherenceUser }],\n      temperature: 0.4, max_tokens: 2048\n    },\n    relevanceCritiqueBody: {\n      model: critiqueModel,\n      messages: [{ role: 'system', content: relevanceSys }, { role: 'user', content: relevanceUser }],\n      temperature: 0.4, max_tokens: 2048\n    },\n    personalCritiqueBody: {\n      model: critiqueModel,\n      messages: [{ role: 'system', content: personalSys }, { role: 'user', content: personalUser }],\n      temperature: 0.5, max_tokens: 2048\n    }\n  }\n}];\n"
+      },
+      "id": "build-critique",
+      "name": "Build Critique Prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "HTTP-Referer",
+              "value": "https://creativity-engine.n8n.local"
+            },
+            {
+              "name": "X-Title",
+              "value": "Creativity Engine"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.noveltyCritiqueBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "novelty-critique",
+      "name": "Novelty Critique (Flash)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1840,
+        40
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "HTTP-Referer",
+              "value": "https://creativity-engine.n8n.local"
+            },
+            {
+              "name": "X-Title",
+              "value": "Creativity Engine"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.coherenceCritiqueBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "coherence-critique",
+      "name": "Coherence Critique (Flash)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1840,
+        220
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "HTTP-Referer",
+              "value": "https://creativity-engine.n8n.local"
+            },
+            {
+              "name": "X-Title",
+              "value": "Creativity Engine"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.relevanceCritiqueBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "relevance-critique",
+      "name": "Relevance Critique (Flash)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1840,
+        400
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "HTTP-Referer",
+              "value": "https://creativity-engine.n8n.local"
+            },
+            {
+              "name": "X-Title",
+              "value": "Creativity Engine"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.personalCritiqueBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "personal-critique",
+      "name": "Personalization Critique (Flash)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1840,
+        580
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      },
+      "id": "merge-critiques",
+      "name": "Merge Critique Outputs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// Parse all 4 critique responses\nconst items = $input.all();\n\nfunction parseScore(item, scoreKey) {\n  try {\n    let content = '';\n    const data = item.json;\n    if (data.choices && data.choices[0]) content = data.choices[0].message.content;\n    else if (data.data && data.data.choices) content = data.data.choices[0].message.content;\n    else content = JSON.stringify(data);\n\n    // Try to parse JSON\n    const jsonMatch = content.match(/\\`\\`\\`json?\\n?([\\s\\S]*?)\\`\\`\\`/);\n    const toParse = jsonMatch ? jsonMatch[1] : content;\n    const parsed = JSON.parse(toParse);\n    return {\n      score: parsed[scoreKey] || 0.5,\n      suggestions: parsed.suggestions || [],\n      raw: content\n    };\n  } catch (e) {\n    // Fallback: try to extract score with regex\n    try {\n      const content = item.json?.choices?.[0]?.message?.content || JSON.stringify(item.json);\n      const match = content.match(new RegExp(scoreKey + '.*?([0-9]\\\\.[0-9]+)'));\n      return { score: match ? parseFloat(match[1]) : 0.5, suggestions: [], raw: content };\n    } catch (e2) {\n      return { score: 0.5, suggestions: [], raw: '' };\n    }\n  }\n}\n\nconst novelty = parseScore(items[0], 'novelty_score');\nconst coherence = parseScore(items[1], 'coherence_score');\nconst relevance = parseScore(items[2], 'relevance_score');\nconst personal = parseScore(items[3], 'personalization_score');\n\n// Weighted ensemble score (matching original weights)\nconst ensembleScore = (\n  0.30 * novelty.score +\n  0.25 * coherence.score +\n  0.30 * relevance.score +\n  0.15 * personal.score\n);\n\nconst needsRefinement = ensembleScore < 0.6;\n\n// Collect all suggestions for potential refinement\nconst allSuggestions = [\n  ...novelty.suggestions,\n  ...coherence.suggestions,\n  ...relevance.suggestions,\n  ...personal.suggestions\n].filter((s, i, arr) => arr.indexOf(s) === i).slice(0, 10);\n\nconst originalInput = $('Build Critique Prompts').item.json.originalInput;\nconst chatId = $('Build Critique Prompts').item.json.chatId;\nconst synthesized = $('Build Critique Prompts').item.json.synthesized;\n\nreturn [{\n  json: {\n    chatId,\n    originalInput,\n    synthesized,\n    scores: {\n      novelty: novelty.score,\n      coherence: coherence.score,\n      relevance: relevance.score,\n      personalization: personal.score\n    },\n    ensembleScore,\n    needsRefinement,\n    suggestions: allSuggestions\n  }\n}];\n"
+      },
+      "id": "ensemble-score",
+      "name": "Calculate Ensemble Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "refine-check",
+              "leftValue": "={{ $json.needsRefinement }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-refine",
+      "name": "Needs Refinement?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2580,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst data = $input.first().json;\n\nconst scoresText = Object.entries(data.scores).map(([k, v]) => '- ' + k + ': ' + v.toFixed(2)).join('\\n');\nconst suggestionsText = data.suggestions.map(s => '- ' + s).join('\\n');\n\nconst refineSystem = 'You are an expert at refining creative outputs based on structured critique. You improve weak areas while preserving and enhancing strengths.';\n\nconst refineUser = 'Refine this creative output based on the critique:\\n\\nOriginal Input: ' + data.originalInput + '\\n\\nCurrent Output:\\n' + data.synthesized + '\\n\\nCritique Scores:\\n' + scoresText + '\\n\\nEnsemble Score: ' + data.ensembleScore.toFixed(2) + ' (threshold: 0.60)\\n\\nSuggestions for Improvement:\\n' + suggestionsText + '\\n\\nCreate a refined version that:\\n1. Addresses the critique suggestions\\n2. Improves weak scoring areas\\n3. Maintains or enhances strengths\\n4. Preserves the core creative vision\\n5. Produces a more polished, deeper result\\n\\nProvide the refined output:';\n\nreturn [{\n  json: {\n    chatId: data.chatId,\n    originalInput: data.originalInput,\n    refinementBody: {\n      model: 'anthropic/claude-opus-4',\n      messages: [\n        { role: 'system', content: refineSystem },\n        { role: 'user', content: refineUser }\n      ],\n      temperature: 0.6,\n      max_tokens: 8192\n    }\n  }\n}];\n"
+      },
+      "id": "build-refine",
+      "name": "Build Refinement Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2820,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "HTTP-Referer",
+              "value": "https://creativity-engine.n8n.local"
+            },
+            {
+              "name": "X-Title",
+              "value": "Creativity Engine"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.refinementBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "refine-call",
+      "name": "Refinement (Opus 4)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3060,
+        420
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst httpResponse = $input.first().json;\nlet refined = '';\nif (httpResponse.choices && httpResponse.choices[0]) {\n  refined = httpResponse.choices[0].message.content;\n} else if (httpResponse.data && httpResponse.data.choices) {\n  refined = httpResponse.data.choices[0].message.content;\n} else {\n  refined = JSON.stringify(httpResponse).substring(0, 4000);\n}\n\nconst chatId = $('Build Refinement Prompt').item.json.chatId;\nconst ensembleData = $('Calculate Ensemble Score').item.json;\n\n// Format for Telegram (Markdown)\nlet output = refined;\noutput += '\\n\\n---\\n_Creativity Engine • Refined (score: ' + ensembleData.ensembleScore.toFixed(2) + ' → improved)_';\noutput += '\\n_Models: Opus 4 + Gemini 2.5 Pro + GPT-4.1 + Flash_';\n\nreturn [{ json: { chatId, finalOutput: output } }];\n"
+      },
+      "id": "format-refined",
+      "name": "Format Refined Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst data = $input.first().json;\n\n// Format for Telegram (Markdown)\nlet output = data.synthesized;\noutput += '\\n\\n---\\n_Creativity Engine • Score: ' + data.ensembleScore.toFixed(2) + '_';\noutput += '\\n_Models: Opus 4 + Gemini 2.5 Pro + GPT-4.1 + Flash_';\n\nreturn [{ json: { chatId: data.chatId, finalOutput: output } }];\n"
+      },
+      "id": "format-direct",
+      "name": "Format Direct Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2820,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.finalOutput }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram",
+      "name": "Send Telegram Response",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3540,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message?.chat?.id || $json.chat_id }}",
+        "additionalFields": {},
+        "operation": "sendChatAction",
+        "action": "typing"
+      },
+      "id": "typing-indicator",
+      "name": "Typing Indicator",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        140,
+        140
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot",
+          "name": "Telegram Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Preprocess & Build Prompts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Typing Indicator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preprocess & Build Prompts": {
+      "main": [
+        [
+          {
+            "node": "Novelty Agent (Opus 4)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Specialized Agent (Gemini 2.5 Pro)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "MiniCAE Agent (Flash)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IdeaCAE Agent (GPT-4.1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Novelty Agent (Opus 4)": {
+      "main": [
+        [
+          {
+            "node": "Merge Agent Outputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Specialized Agent (Gemini 2.5 Pro)": {
+      "main": [
+        [
+          {
+            "node": "Merge Agent Outputs",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "MiniCAE Agent (Flash)": {
+      "main": [
+        [
+          {
+            "node": "Merge Agent Outputs",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "IdeaCAE Agent (GPT-4.1)": {
+      "main": [
+        [
+          {
+            "node": "Merge Agent Outputs",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge Agent Outputs": {
+      "main": [
+        [
+          {
+            "node": "Build Synthesis Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Synthesis Prompt": {
+      "main": [
+        [
+          {
+            "node": "Synthesis (Opus 4)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Synthesis (Opus 4)": {
+      "main": [
+        [
+          {
+            "node": "Build Critique Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Critique Prompts": {
+      "main": [
+        [
+          {
+            "node": "Novelty Critique (Flash)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Coherence Critique (Flash)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Relevance Critique (Flash)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Personalization Critique (Flash)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Novelty Critique (Flash)": {
+      "main": [
+        [
+          {
+            "node": "Merge Critique Outputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coherence Critique (Flash)": {
+      "main": [
+        [
+          {
+            "node": "Merge Critique Outputs",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Relevance Critique (Flash)": {
+      "main": [
+        [
+          {
+            "node": "Merge Critique Outputs",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Personalization Critique (Flash)": {
+      "main": [
+        [
+          {
+            "node": "Merge Critique Outputs",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge Critique Outputs": {
+      "main": [
+        [
+          {
+            "node": "Calculate Ensemble Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Ensemble Score": {
+      "main": [
+        [
+          {
+            "node": "Needs Refinement?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Refinement?": {
+      "main": [
+        [
+          {
+            "node": "Build Refinement Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Direct Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Refinement Prompt": {
+      "main": [
+        [
+          {
+            "node": "Refinement (Opus 4)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refinement (Opus 4)": {
+      "main": [
+        [
+          {
+            "node": "Format Refined Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Refined Output": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Direct Output": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-18T17:33:23.249Z",
+  "versionId": "creativity-engine-v1"
+}
